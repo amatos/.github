@@ -1,0 +1,113 @@
+name: Reusable flake-lock CI
+
+# Validates a disposable "flake update" branch (nix fmt, statix, deadnix, nix
+# flake check) and, once it's clean, opens and squash-merges a PR into main.
+#
+# The calling repo is expected to reset `work-branch` from `main`'s tip and
+# push it whenever a flake input changes (see nixie's update-flake.py /
+# nixieflakeup) — this workflow assumes that branch is always exactly `main`
+# plus one or more lockfile-only commits, never a long-lived feature branch.
+#
+# statix/deadnix are gates only (they never modify files) — only nix fmt
+# auto-fixes, and it's re-run in a bounded loop in case a single pass isn't
+# enough to reach a fixed point. Auto-fix commits on work-branch are pushed
+# with the default GITHUB_TOKEN and are intentionally left unsigned: that
+# token's pushes don't trigger further workflow runs anyway, so there's no
+# benefit to signing them, and this repo's own verify-signed-commits check
+# only gates pushes to main/PRs, never arbitrary branch pushes. The final
+# merge goes through the GitHub API (gh pr merge), which signs the resulting
+# commit on main automatically — the same pattern already used by
+# flake-update.yml (weekly bump) and update-orion.yml in this account.
+
+on:
+  workflow_call:
+    inputs:
+      main-branch:
+        description: "Branch to merge into"
+        type: string
+        default: main
+      work-branch:
+        description: "Disposable branch this workflow validates and merges"
+        type: string
+        default: flake-update
+      cachix-cache-name:
+        description: "Cachix cache name (optional; skipped if empty)"
+        type: string
+        default: ""
+      max-fmt-iterations:
+        description: "Safety cap on nix fmt re-run passes before failing"
+        type: number
+        default: 3
+    secrets:
+      NIX_SECRETS_GITHUB_TOKEN:
+        description: "Fine-grained PAT with contents:read on a private flake=false input (optional)"
+        required: false
+      CACHIX_AUTH_TOKEN:
+        description: "Cachix auth token (optional; only used if cachix-cache-name is set)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  validate-and-merge:
+    name: Validate and merge ${{ inputs.work-branch }}
+    runs-on: ubuntu-latest
+    env:
+      NIX_CONFIG: "access-tokens = github.com=${{ secrets.NIX_SECRETS_GITHUB_TOKEN }}"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.work-branch }}
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - if: inputs.cachix-cache-name != ''
+        uses: cachix/cachix-action@v17
+        with:
+          name: ${{ inputs.cachix-cache-name }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Configure git identity for auto-fix commits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: nix fmt (auto-fix, re-run until stable)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 "${{ inputs.max-fmt-iterations }}"); do
+            find . -name '*.nix' ! -path './.git/*' -print0 | xargs -0 nix fmt --
+            if git diff --quiet; then
+              echo "nix fmt converged after $i pass(es)"
+              exit 0
+            fi
+            git add -A
+            git commit -m "style: nix fmt (pass $i)"
+            git push origin "HEAD:${{ inputs.work-branch }}"
+          done
+          echo "::error::nix fmt did not converge after ${{ inputs.max-fmt-iterations }} passes"
+          exit 1
+
+      - name: statix check (gate only, no file changes)
+        run: nix run nixpkgs#statix -- check .
+
+      - name: deadnix check (gate only, no file changes)
+        run: nix run nixpkgs#deadnix -- --fail .
+
+      - name: nix flake check
+        run: nix flake check
+
+      - name: Open and merge PR into ${{ inputs.main-branch }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh pr create \
+            --base "${{ inputs.main-branch }}" \
+            --head "${{ inputs.work-branch }}" \
+            --title "chore: update flake.lock" \
+            --body "Automated flake input update, validated by CI." \
+            || echo "PR already open for ${{ inputs.work-branch }}, continuing"
+          gh pr merge "${{ inputs.work-branch }}" --squash --delete-branch
