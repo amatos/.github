@@ -34,6 +34,10 @@ on:
         description: "Cachix cache name (optional; skipped if empty)"
         type: string
         default: ""
+      deadnix-exclude:
+        description: "Glob passed to deadnix --exclude (optional; e.g. NixOS-generated files a caller never hand-edits)"
+        type: string
+        default: ""
       max-fmt-iterations:
         description: "Safety cap on nix fmt re-run passes before failing"
         type: number
@@ -94,7 +98,12 @@ jobs:
         run: nix run nixpkgs#statix -- check .
 
       - name: deadnix check (gate only, no file changes)
-        run: nix run nixpkgs#deadnix -- --fail .
+        run: |
+          exclude=()
+          if [ -n "${{ inputs.deadnix-exclude }}" ]; then
+            exclude=(--exclude "${{ inputs.deadnix-exclude }}")
+          fi
+          nix run nixpkgs#deadnix -- --fail "${exclude[@]}" .
 
       - name: nix flake check
         run: nix flake check
