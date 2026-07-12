@@ -18,6 +18,11 @@ name: Reusable flake-lock CI
 # merge goes through the GitHub API (gh pr merge), which signs the resulting
 # commit on main automatically — the same pattern already used by
 # flake-update.yml (weekly bump) and update-orion.yml in this account.
+#
+# Callers need "Allow GitHub Actions to create and approve pull requests"
+# enabled under their own repo's Settings → Actions → General (off by
+# default) — without it, PR creation below fails outright with "GitHub
+# Actions is not permitted to create or approve pull requests".
 
 on:
   workflow_call:
