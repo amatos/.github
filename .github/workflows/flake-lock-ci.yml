@@ -119,4 +119,10 @@ jobs:
             --title "chore: update flake.lock" \
             --body "Automated flake input update, validated by CI." \
             || echo "PR already open for ${{ inputs.work-branch }}, continuing"
-          gh pr merge "${{ inputs.work-branch }}" --squash --delete-branch
+          # --delete-branch is deliberately not used here: on top of the API
+          # merge, it tries to switch the local checkout to main afterward as
+          # a convenience, which fails ("origin/main is not a commit") since
+          # this checkout only ever fetched work-branch. Deleting via `git
+          # push` talks to the remote directly and needs no local ref for main.
+          gh pr merge "${{ inputs.work-branch }}" --squash
+          git push origin --delete "${{ inputs.work-branch }}"
