@@ -1,0 +1,22 @@
+name: Maintenance
+description: Dependency updates, tooling, chores, refactors, or repository upkeep.
+title: "[Maintenance]: "
+labels: ["maintenance"]
+body:
+  - type: textarea
+    id: work
+    attributes:
+      label: Work
+      description: What needs to be updated or cleaned up?
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: Reason
+      description: Why is this worth doing now?
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: How should the change be checked?
